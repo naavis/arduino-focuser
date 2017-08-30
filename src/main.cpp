@@ -12,6 +12,7 @@ Adafruit_StepperMotor* motor;
 
 uint16_t currentPosition;
 uint16_t newPosition;
+uint8_t stepMode = DOUBLE;
 bool isMoving = false;
 
 void clearBuffer(char* buffer, uint16_t length) {
@@ -42,7 +43,7 @@ void loop() {
     if (currentPosition < newPosition) {
       if (currentPosition < 65535) {
 #ifndef UNPOWERED_TEST
-        motor->onestep(FORWARD, DOUBLE);
+        motor->onestep(FORWARD, stepMode);
 #endif
         currentPosition += 1;
       } else {
@@ -51,7 +52,7 @@ void loop() {
     } else if (currentPosition > newPosition) {
       if (currentPosition > 0) {
 #ifndef UNPOWERED_TEST
-        motor->onestep(BACKWARD, DOUBLE);
+        motor->onestep(BACKWARD, stepMode);
 #endif
         currentPosition -= 1;
       } else {
@@ -101,16 +102,22 @@ void loop() {
           isMoving = true;
           break;
         case check_if_half_step:
-          /* TODO: Check if half-stepping */
-          Serial.print("00#");
+          /* Check if half-stepping */
+          if (stepMode == INTERLEAVE) {
+            Serial.print("FF#");
+          } else {
+            Serial.print("00#");
+          }
           break;
         case set_full_step:
-          /* TODO: Set full-step mode */
+          /* Set full-step mode */
           if (isMoving) break;
+          stepMode = DOUBLE;
           break;
         case set_half_step:
-          /* TODO: Set half-step mode */
+          /* Set half-step mode */
           if (isMoving) break;
+          stepMode = INTERLEAVE;
           break;
         case check_if_moving:
           /* Check if moving */
@@ -130,7 +137,7 @@ void loop() {
           break;
         case get_speed:
           /* TODO: Get speed */
-          Serial.print("04#");
+          Serial.print("02#");
           break;
         case set_speed:
           /* TODO: Set speed */
