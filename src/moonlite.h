@@ -57,4 +57,9 @@ uint16_t four_chars_to_uint16(char* buffer) {
   return (uint16_t)(result & 0xFFFF);
 }
 
+uint16_t two_chars_to_uint8(char* buffer) {
+  long int result = strtol(buffer, NULL, 16);
+  return (uint8_t)(result & 0xFF);
+}
+
 #endif

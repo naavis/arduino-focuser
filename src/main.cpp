@@ -13,6 +13,7 @@ Adafruit_StepperMotor* motor;
 uint16_t currentPosition;
 uint16_t newPosition;
 uint8_t stepMode = DOUBLE;
+uint8_t delayMultiplier = 2;
 bool isMoving = false;
 
 void clearBuffer(char* buffer, uint16_t length) {
@@ -59,8 +60,8 @@ void loop() {
         isMoving = false;
       }
     }
-    /* TODO: Set stepping delay based on speed commands */
-    delay(1000.0/250.0);
+    /* Set stepping delay based on speed commands */
+    delay(delayMultiplier << 2);
 
     if (currentPosition == newPosition) {
       isMoving = false;
@@ -132,16 +133,20 @@ void loop() {
           Serial.print("01#");
           break;
         case get_backlight_value:
-          /* Get current RED Led Backlight value */
+          /* Get current Red LED Backlight value */
           Serial.print("00#");
           break;
         case get_speed:
-          /* TODO: Get speed */
-          Serial.print("02#");
+          /* Get speed */
+          char temp[2];
+          sprintf(temp, "%02X", delayMultiplier);
+          Serial.print(temp);
+          Serial.print("#");
           break;
         case set_speed:
-          /* TODO: Set speed */
+          /* Set speed */
           if (isMoving) break;
+          delayMultiplier = two_chars_to_uint8(serialBuffer + 2);
           break;
         case get_temperature:
           /* TODO: Get temperature */
