@@ -2,8 +2,6 @@
 #include <Adafruit_MotorShield.h>
 #include "moonlite.h"
 
-#define UNPOWERED_TEST
-
 #define SERIAL_BUFFER_LENGTH 8
 char serialBuffer[SERIAL_BUFFER_LENGTH];
 
@@ -31,11 +29,9 @@ void setup() {
     delay(10);
   }
 
-#ifndef UNPOWERED_TEST
   AFMS = Adafruit_MotorShield();
-  motor = AFMS.getStepper(48, 2);
-  motor->setSpeed(120);
-#endif
+  AFMS.begin();
+  motor = AFMS.getStepper(48, 1);
 }
 
 void loop() {
@@ -43,18 +39,14 @@ void loop() {
     /* Move stepper and update currentPosition */
     if (currentPosition < newPosition) {
       if (currentPosition < 65535) {
-#ifndef UNPOWERED_TEST
         motor->onestep(FORWARD, stepMode);
-#endif
         currentPosition += 1;
       } else {
         isMoving = false;
       }
     } else if (currentPosition > newPosition) {
       if (currentPosition > 0) {
-#ifndef UNPOWERED_TEST
         motor->onestep(BACKWARD, stepMode);
-#endif
         currentPosition -= 1;
       } else {
         isMoving = false;
