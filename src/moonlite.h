@@ -62,4 +62,10 @@ uint16_t two_chars_to_uint8(char* buffer) {
   return (uint8_t)(result & 0xFF);
 }
 
+void clearBuffer(char* buffer, uint16_t length) {
+  for (unsigned int i = 0; i < length; ++i) {
+    buffer[i] = 0;
+  }
+}
+
 #endif

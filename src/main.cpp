@@ -14,11 +14,6 @@ uint8_t stepMode = SINGLE;
 uint8_t delayMultiplier = 2;
 bool isMoving = false;
 
-void clearBuffer(char* buffer, uint16_t length) {
-  for (unsigned int i = 0; i < length; ++i) {
-    buffer[i] = 0;
-  }
-}
 
 void setup() {
   currentPosition = 32768;
