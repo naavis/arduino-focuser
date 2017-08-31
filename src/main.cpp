@@ -80,7 +80,9 @@ void loop() {
           break;
         case get_current_position:
           /* Get current position */
-          Serial.print(currentPosition, HEX);
+          char currentPositionString[4];
+          sprintf(currentPositionString, "%04X", currentPosition);
+          Serial.print(currentPositionString);
           Serial.print("#");
           break;
         case set_current_position:
@@ -90,7 +92,9 @@ void loop() {
           break;
         case get_new_position:
           /* Get new position set by SN */
-          Serial.print(newPosition, HEX);
+          char newPositionString[4];
+          sprintf(newPositionString, "%04X", newPosition);
+          Serial.print(newPositionString);
           Serial.print("#");
           break;
         case set_new_position:
@@ -138,9 +142,9 @@ void loop() {
           break;
         case get_speed:
           /* Get speed */
-          char temp[2];
-          sprintf(temp, "%02X", delayMultiplier);
-          Serial.print(temp);
+          char speedString[2];
+          sprintf(speedString, "%02X", delayMultiplier);
+          Serial.print(speedString);
           Serial.print("#");
           break;
         case set_speed:
