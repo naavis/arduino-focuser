@@ -10,7 +10,7 @@ Adafruit_StepperMotor* motor;
 
 uint16_t currentPosition;
 uint16_t newPosition;
-uint8_t stepMode = DOUBLE;
+uint8_t stepMode = SINGLE;
 uint8_t delayMultiplier = 2;
 bool isMoving = false;
 
@@ -109,7 +109,7 @@ void loop() {
         case set_full_step:
           /* Set full-step mode */
           if (isMoving) break;
-          stepMode = DOUBLE;
+          stepMode = SINGLE;
           break;
         case set_half_step:
           /* Set half-step mode */
