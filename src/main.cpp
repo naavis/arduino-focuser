@@ -2,22 +2,42 @@
 #include <Adafruit_MotorShield.h>
 #include "moonlite.h"
 
+/* Serial commands are stored in this buffer for parsing. */
 #define SERIAL_BUFFER_LENGTH 8
 char serialBuffer[SERIAL_BUFFER_LENGTH];
 
 Adafruit_MotorShield AFMS;
 Adafruit_StepperMotor* motor;
 
+/* Current focuser position in steps. */
 uint16_t currentPosition;
-uint16_t newPosition;
-uint8_t stepMode = SINGLE;
-uint8_t delayMultiplier = 2;
-bool isMoving = false;
 
+/*
+newPosition is the position given with SP command.
+Focuser will go to this position when given FG command.
+*/
+uint16_t newPosition;
+
+/* Default step mode */
+uint8_t stepMode = SINGLE;
+
+/*
+Delay length given by SD command.
+Only the following values are accepted in the spec:
+2 -> 4 ms,
+4 -> 8 ms,
+8 -> 16 ms,
+16 -> 32 ms,
+32 -> 64 ms.
+*/
+uint8_t delayMultiplier = 2;
+
+/* Is the focuser currently moving? */
+bool isMoving = false;
 
 void setup() {
   currentPosition = 32768;
-  newPosition = 32768;
+  newPosition = currentPosition;
   clearBuffer(serialBuffer, 8);
   Serial.begin(9600);
   while(!Serial) {
@@ -55,6 +75,7 @@ void loop() {
     }
   }
 
+  /* Check for serial communications and act accordingly. */
   if (Serial.available()) {
     if (Serial.read() == ':') {
       clearBuffer(serialBuffer, SERIAL_BUFFER_LENGTH);
@@ -62,7 +83,7 @@ void loop() {
       MOONLITE_COMMAND command = moonliteStringToEnum(serialBuffer);
       switch (command) {
         case stop:
-          /* STOP EVERYTHING */
+          /* Stop moving */
           isMoving = false;
           break;
         case get_current_position:
