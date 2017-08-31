@@ -61,7 +61,7 @@ void loop() {
       }
     }
     /* Set stepping delay based on speed commands */
-    delay(delayMultiplier << 2);
+    delayMicroseconds(((unsigned int)delayMultiplier) * 2000);
 
     if (currentPosition == newPosition) {
       isMoving = false;
