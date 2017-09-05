@@ -19,7 +19,7 @@ Focuser will go to this position when given FG command.
 uint16_t newPosition;
 
 /* Default step mode */
-uint8_t stepMode = SINGLE;
+uint8_t stepMode = DOUBLE;
 
 /*
 Delay length given by SD command.
@@ -125,7 +125,7 @@ void loop() {
 				case set_full_step:
 					/* Set full-step mode */
 					if (isMoving) break;
-					stepMode = SINGLE;
+					stepMode = DOUBLE;
 					break;
 				case set_half_step:
 					/* Set half-step mode */
