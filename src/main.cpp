@@ -22,7 +22,7 @@ uint16_t newPosition;
 uint8_t stepMode = DOUBLE;
 
 /*
-Delay length given by SD command.
+Delay length between step, given by SD command.
 Only the following values are accepted in the spec:
 2 -> 4 ms,
 4 -> 8 ms,
