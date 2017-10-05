@@ -47,6 +47,7 @@ void setup() {
 	AFMS = Adafruit_MotorShield();
 	AFMS.begin();
 	motor = AFMS.getStepper(48, 1);
+	motor->release();
 }
 
 void loop() {
@@ -73,6 +74,11 @@ void loop() {
 		if (currentPosition == newPosition) {
 			isMoving = false;
 		}
+
+		/* Release motor if stopping conditions reached */
+		if (!isMoving) {
+			motor->release();
+		}
 	}
 
 	/* Check for serial communications and act accordingly. */
@@ -85,6 +91,7 @@ void loop() {
 				case stop:
 					/* Stop moving */
 					isMoving = false;
+					motor->release();
 					break;
 				case get_current_position:
 					/* Get current position */
