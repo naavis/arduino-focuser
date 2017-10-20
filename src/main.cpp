@@ -1,13 +1,27 @@
-#include <Wire.h>
-#include <Adafruit_MotorShield.h>
+#include <DRV8825.h>
 #include "moonlite.h"
+
+/* Stepper pins */
+#define PIN_M0 6
+#define PIN_M1 5
+#define PIN_M2 4
+#define PIN_DIR 2
+#define PIN_STEP 3
+#define PIN_ENABLE 7
+#define PIN_LED 13
+
+#define MICROSTEPS_HIGH 32
+#define MICROSTEPS_LOW 8
+#define RPM 200
+
+/* Stepper definition */
+
+DRV8825 stepper(200, PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
+bool useFineMicroSteps = true;
 
 /* Serial commands are stored in this buffer for parsing. */
 #define SERIAL_BUFFER_LENGTH 8
 char serialBuffer[SERIAL_BUFFER_LENGTH];
-
-Adafruit_MotorShield AFMS;
-Adafruit_StepperMotor* motor;
 
 /* Current focuser position in steps. */
 uint16_t currentPosition;
@@ -17,9 +31,6 @@ newPosition is the position given with SP command.
 Focuser will go to this position when given FG command.
 */
 uint16_t newPosition;
-
-/* Default step mode */
-uint8_t stepMode = DOUBLE;
 
 /*
 Delay length between step, given by SD command.
@@ -44,10 +55,7 @@ void setup() {
 		delay(10);
 	}
 
-	AFMS = Adafruit_MotorShield();
-	AFMS.begin();
-	motor = AFMS.getStepper(48, 1);
-	motor->release();
+	stepper.begin(RPM, MICROSTEPS_HIGH);
 }
 
 void loop() {
@@ -55,21 +63,21 @@ void loop() {
 		/* Move stepper and update currentPosition */
 		if (currentPosition < newPosition) {
 			if (currentPosition < 65535) {
-				motor->onestep(FORWARD, stepMode);
+				stepper.move(1);
 				currentPosition += 1;
 			} else {
 				isMoving = false;
 			}
 		} else if (currentPosition > newPosition) {
 			if (currentPosition > 0) {
-				motor->onestep(BACKWARD, stepMode);
+				stepper.move(-1);
 				currentPosition -= 1;
 			} else {
 				isMoving = false;
 			}
 		}
 		/* Set stepping delay based on speed commands */
-		delayMicroseconds(((unsigned int)delayMultiplier) * 2000);
+		delayMicroseconds(((unsigned int)delayMultiplier) * 200);
 
 		if (currentPosition == newPosition) {
 			isMoving = false;
@@ -77,7 +85,7 @@ void loop() {
 
 		/* Release motor if stopping conditions reached */
 		if (!isMoving) {
-			motor->release();
+			stepper.disable();
 		}
 	}
 
@@ -91,7 +99,7 @@ void loop() {
 				case stop:
 					/* Stop moving */
 					isMoving = false;
-					motor->release();
+					stepper.disable();
 					break;
 				case get_current_position:
 					/* Get current position */
@@ -123,7 +131,7 @@ void loop() {
 					break;
 				case check_if_half_step:
 					/* Check if half-stepping */
-					if (stepMode == INTERLEAVE) {
+					if (!useFineMicroSteps) {
 						Serial.print("FF#");
 					} else {
 						Serial.print("00#");
@@ -132,12 +140,14 @@ void loop() {
 				case set_full_step:
 					/* Set full-step mode */
 					if (isMoving) break;
-					stepMode = DOUBLE;
+					stepper.setMicrostep(MICROSTEPS_LOW);
+					useFineMicroSteps = false;
 					break;
 				case set_half_step:
 					/* Set half-step mode */
 					if (isMoving) break;
-					stepMode = INTERLEAVE;
+					stepper.setMicrostep(MICROSTEPS_HIGH);
+					useFineMicroSteps = true;
 					break;
 				case check_if_moving:
 					/* Check if moving */
