@@ -23,12 +23,14 @@
 DRV8825 stepper(200, PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
 bool useFineMicroSteps = true;
 bool stepperEnabled = false;
+bool holdEnabled = false;
 
 struct Settings {
 	uint8_t marker;
 	uint16_t currentPosition;
 	uint8_t useFineMicroSteps;
 	uint8_t delayMultiplier;
+	uint8_t holdEnabled;
 } settings;
 
 /* Serial commands are stored in this buffer for parsing. */
@@ -65,7 +67,7 @@ void motorInterrupt();
 
 void loadSettings() {
 	uint8_t* dst = (uint8_t*)&settings;
-	for (int i = 0; i < sizeof(Settings); i++) {
+	for (unsigned int i = 0; i < sizeof(Settings); i++) {
 		dst[i] = EEPROM.read(i);
 	}
 
@@ -73,11 +75,13 @@ void loadSettings() {
 		currentPosition = settings.currentPosition;
 		delayMultiplier = settings.delayMultiplier;
 		useFineMicroSteps = settings.useFineMicroSteps;
+		holdEnabled = settings.holdEnabled;
 	} else {
 		settings.marker = EEPROM_MARKER;
 		settings.currentPosition = currentPosition = 0;
 		settings.delayMultiplier = delayMultiplier = 2;
 		settings.useFineMicroSteps = useFineMicroSteps = true;
+		settings.holdEnabled = holdEnabled = false;
 	}
 }
 
@@ -85,9 +89,10 @@ void saveSettings() {
 	settings.currentPosition = currentPosition;
 	settings.delayMultiplier = delayMultiplier;
 	settings.useFineMicroSteps = useFineMicroSteps;
+	settings.holdEnabled = holdEnabled;
 
 	uint8_t* dst = (uint8_t*)&settings;
-	for (int i = 0; i < sizeof(Settings); i++) {
+	for (unsigned int i = 0; i < sizeof(Settings); i++) {
 		if (EEPROM.read(i) != dst[i]) {
 			EEPROM.write(i, dst[i]);
 		}
@@ -97,8 +102,6 @@ void saveSettings() {
 void setup() {
 	loadSettings();
 
-	currentPosition = settings.currentPosition;
-	delayMultiplier = settings.delayMultiplier;
 	newPosition = currentPosition;
 	clearBuffer(serialBuffer, 8);
 	Serial.begin(9600);
@@ -107,7 +110,11 @@ void setup() {
 	}
 
 	stepper.begin(RPM, MICROSTEPS_HALF);
-	stepper.disable();
+	if (holdEnabled) {
+		stepper.enable();
+	} else {
+		stepper.disable();
+	}
 	setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
 	Timer1.attachInterrupt(motorInterrupt);
 }
@@ -120,7 +127,7 @@ void motorInterrupt() {
 	/* Move stepper and update currentPosition */
 	if (currentPosition < newPosition) {
 		if (currentPosition < 65535) {
-			if (!stepperEnabled) {
+			if (!stepperEnabled && !holdEnabled) {
 				stepper.enable();
 				delay(1);
 				stepperEnabled = true;
@@ -132,7 +139,7 @@ void motorInterrupt() {
 		}
 	} else if (currentPosition > newPosition) {
 		if (currentPosition > 0) {
-			if (!stepperEnabled) {
+			if (!stepperEnabled && !holdEnabled) {
 				stepper.enable();
 				delay(1);
 				stepperEnabled = true;
@@ -151,7 +158,9 @@ void motorInterrupt() {
 
 	/* Release motor if stopping conditions reached */
 	if (!isMoving) {
-		stepper.disable();
+		if (!holdEnabled) {
+			stepper.disable();
+		}
 		stepperEnabled = false;
 	}
 }
@@ -257,6 +266,16 @@ void loop() {
 				case get_temperature:
 					/* TODO: Get temperature */
 					Serial.print("0000#");
+					break;
+				case set_hold_enabled:
+					holdEnabled = true;
+					stepper.enable();
+					saveSettings();
+					break;
+				case set_hold_disabled:
+					holdEnabled = false;
+					stepper.disable();
+					saveSettings();
 					break;
 				case unrecognized:
 					/* TODO: React to unrecognized command */

@@ -17,10 +17,12 @@ typedef enum {
 	get_speed,
 	set_speed,
 	get_temperature,
+	set_hold_enabled,
+	set_hold_disabled,
 	unrecognized
 } MOONLITE_COMMAND;
 
-#define NUM_MOONLITE_COMMANDS 15
+#define NUM_MOONLITE_COMMANDS 17
 
 const static struct {
 	MOONLITE_COMMAND val;
@@ -40,7 +42,9 @@ const static struct {
 	{ get_backlight_value, "GB" },
 	{ get_speed, "GD" },
 	{ set_speed, "SD" },
-	{ get_temperature, "GT" }
+	{ get_temperature, "GT" },
+	{ set_hold_enabled, "HE" },
+	{ set_hold_disabled, "HD" }
 };
 
 MOONLITE_COMMAND moonliteStringToEnum(char* buffer) {
