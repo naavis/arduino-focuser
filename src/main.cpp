@@ -10,8 +10,8 @@
 #define PIN_ENABLE 7
 #define PIN_LED 13
 
-#define MICROSTEPS_HIGH 32
-#define MICROSTEPS_LOW 8
+#define MICROSTEPS_HALF 32
+#define MICROSTEPS_FULL 8
 #define RPM 200
 
 /* Stepper definition */
@@ -55,7 +55,8 @@ void setup() {
 		delay(10);
 	}
 
-	stepper.begin(RPM, MICROSTEPS_HIGH);
+	stepper.begin(RPM, MICROSTEPS_HALF);
+	stepper.disable();
 }
 
 void loop() {
@@ -63,6 +64,8 @@ void loop() {
 		/* Move stepper and update currentPosition */
 		if (currentPosition < newPosition) {
 			if (currentPosition < 65535) {
+				stepper.enable();
+				delay(1);
 				stepper.move(1);
 				currentPosition += 1;
 			} else {
@@ -70,6 +73,8 @@ void loop() {
 			}
 		} else if (currentPosition > newPosition) {
 			if (currentPosition > 0) {
+				stepper.enable();
+				delay(1);
 				stepper.move(-1);
 				currentPosition -= 1;
 			} else {
@@ -131,7 +136,7 @@ void loop() {
 					break;
 				case check_if_half_step:
 					/* Check if half-stepping */
-					if (!useFineMicroSteps) {
+					if (useFineMicroSteps) {
 						Serial.print("FF#");
 					} else {
 						Serial.print("00#");
@@ -140,13 +145,13 @@ void loop() {
 				case set_full_step:
 					/* Set full-step mode */
 					if (isMoving) break;
-					stepper.setMicrostep(MICROSTEPS_LOW);
+					stepper.setMicrostep(MICROSTEPS_FULL);
 					useFineMicroSteps = false;
 					break;
 				case set_half_step:
 					/* Set half-step mode */
 					if (isMoving) break;
-					stepper.setMicrostep(MICROSTEPS_HIGH);
+					stepper.setMicrostep(MICROSTEPS_HALF);
 					useFineMicroSteps = true;
 					break;
 				case check_if_moving:
