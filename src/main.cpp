@@ -1,4 +1,6 @@
 #include <DRV8825.h>
+#include <EEPROM.h>
+#include <TimerOne.h>
 #include "moonlite.h"
 
 /* Stepper pins */
@@ -10,27 +12,37 @@
 #define PIN_ENABLE 7
 #define PIN_LED 13
 
-#define MICROSTEPS_HALF 32
+#define MICROSTEPS_HALF 16
 #define MICROSTEPS_FULL 8
 #define RPM 200
+#define DELAY_MULTIPLIER 300
+
+#define EEPROM_MARKER 'F'
 
 /* Stepper definition */
-
 DRV8825 stepper(200, PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
 bool useFineMicroSteps = true;
+bool stepperEnabled = false;
+
+struct Settings {
+	uint8_t marker;
+	uint16_t currentPosition;
+	uint8_t useFineMicroSteps;
+	uint8_t delayMultiplier;
+} settings;
 
 /* Serial commands are stored in this buffer for parsing. */
 #define SERIAL_BUFFER_LENGTH 8
 char serialBuffer[SERIAL_BUFFER_LENGTH];
 
 /* Current focuser position in steps. */
-uint16_t currentPosition;
+volatile uint16_t currentPosition;
 
 /*
 newPosition is the position given with SP command.
 Focuser will go to this position when given FG command.
 */
-uint16_t newPosition;
+volatile uint16_t newPosition;
 
 /*
 Delay length between step, given by SD command.
@@ -40,14 +52,53 @@ Only the following values are accepted in the spec:
 8 -> 16 ms,
 16 -> 32 ms,
 32 -> 64 ms.
+
+But we take some liberty in interpreting this as we use heavy microstepping..
 */
-uint8_t delayMultiplier = 2;
+volatile uint8_t delayMultiplier = 2;
 
 /* Is the focuser currently moving? */
-bool isMoving = false;
+volatile bool isMoving = false;
 
+void setStepInterval(long microseconds);
+void motorInterrupt();
+
+void loadSettings() {
+	uint8_t* dst = (uint8_t*)&settings;
+	for (int i = 0; i < sizeof(Settings); i++) {
+		dst[i] = EEPROM.read(i);
+	}
+
+	if (settings.marker == EEPROM_MARKER) {
+		currentPosition = settings.currentPosition;
+		delayMultiplier = settings.delayMultiplier;
+		useFineMicroSteps = settings.useFineMicroSteps;
+	} else {
+		settings.marker = EEPROM_MARKER;
+		settings.currentPosition = currentPosition = 0;
+		settings.delayMultiplier = delayMultiplier = 2;
+		settings.useFineMicroSteps = useFineMicroSteps = true;
+	}
+}
+
+void saveSettings() {
+	settings.currentPosition = currentPosition;
+	settings.delayMultiplier = delayMultiplier;
+	settings.useFineMicroSteps = useFineMicroSteps;
+
+	uint8_t* dst = (uint8_t*)&settings;
+	for (int i = 0; i < sizeof(Settings); i++) {
+		if (EEPROM.read(i) != dst[i]) {
+			EEPROM.write(i, dst[i]);
+		}
+	}
+}
+	
 void setup() {
-	currentPosition = 32768;
+	loadSettings();
+
+	currentPosition = settings.currentPosition;
+	delayMultiplier = settings.delayMultiplier;
 	newPosition = currentPosition;
 	clearBuffer(serialBuffer, 8);
 	Serial.begin(9600);
@@ -57,43 +108,59 @@ void setup() {
 
 	stepper.begin(RPM, MICROSTEPS_HALF);
 	stepper.disable();
+	setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
+	Timer1.attachInterrupt(motorInterrupt);
+}
+
+void motorInterrupt() {
+	if (!isMoving) {
+		return;
+	}
+
+	/* Move stepper and update currentPosition */
+	if (currentPosition < newPosition) {
+		if (currentPosition < 65535) {
+			if (!stepperEnabled) {
+				stepper.enable();
+				delay(1);
+				stepperEnabled = true;
+			}
+			stepper.move(1);
+			currentPosition += 1;
+		} else {
+			isMoving = false;
+		}
+	} else if (currentPosition > newPosition) {
+		if (currentPosition > 0) {
+			if (!stepperEnabled) {
+				stepper.enable();
+				delay(1);
+				stepperEnabled = true;
+			}
+			stepper.move(-1);
+			currentPosition -= 1;
+		} else {
+			isMoving = false;
+		}
+	}
+	
+	if (currentPosition == newPosition) {
+		isMoving = false;
+		saveSettings();
+	}
+
+	/* Release motor if stopping conditions reached */
+	if (!isMoving) {
+		stepper.disable();
+		stepperEnabled = false;
+	}
+}
+
+void setStepInterval(long microseconds) {
+	Timer1.initialize(microseconds);
 }
 
 void loop() {
-	if (isMoving) {
-		/* Move stepper and update currentPosition */
-		if (currentPosition < newPosition) {
-			if (currentPosition < 65535) {
-				stepper.enable();
-				delay(1);
-				stepper.move(1);
-				currentPosition += 1;
-			} else {
-				isMoving = false;
-			}
-		} else if (currentPosition > newPosition) {
-			if (currentPosition > 0) {
-				stepper.enable();
-				delay(1);
-				stepper.move(-1);
-				currentPosition -= 1;
-			} else {
-				isMoving = false;
-			}
-		}
-		/* Set stepping delay based on speed commands */
-		delayMicroseconds(((unsigned int)delayMultiplier) * 200);
-
-		if (currentPosition == newPosition) {
-			isMoving = false;
-		}
-
-		/* Release motor if stopping conditions reached */
-		if (!isMoving) {
-			stepper.disable();
-		}
-	}
-
 	/* Check for serial communications and act accordingly. */
 	if (Serial.available()) {
 		if (Serial.read() == ':') {
@@ -117,6 +184,7 @@ void loop() {
 					/* Set current position */
 					if (isMoving) break;
 					currentPosition = four_chars_to_uint16(serialBuffer + 2);
+					saveSettings();
 					break;
 				case get_new_position:
 					/* Get new position set by SN */
@@ -147,12 +215,14 @@ void loop() {
 					if (isMoving) break;
 					stepper.setMicrostep(MICROSTEPS_FULL);
 					useFineMicroSteps = false;
+					saveSettings();
 					break;
 				case set_half_step:
 					/* Set half-step mode */
 					if (isMoving) break;
 					stepper.setMicrostep(MICROSTEPS_HALF);
 					useFineMicroSteps = true;
+					saveSettings();
 					break;
 				case check_if_moving:
 					/* Check if moving */
@@ -181,6 +251,8 @@ void loop() {
 					/* Set speed */
 					if (isMoving) break;
 					delayMultiplier = two_chars_to_uint8(serialBuffer + 2);
+					setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
+					saveSettings();
 					break;
 				case get_temperature:
 					/* TODO: Get temperature */
