@@ -62,6 +62,8 @@ volatile uint8_t delayMultiplier = 2;
 /* Is the focuser currently moving? */
 volatile bool isMoving = false;
 
+volatile int disengageCounter = 0;
+
 void setStepInterval(long microseconds);
 void motorInterrupt();
 
@@ -98,7 +100,7 @@ void saveSettings() {
 		}
 	}
 }
-	
+
 void setup() {
 	loadSettings();
 
@@ -119,7 +121,20 @@ void setup() {
 	Timer1.attachInterrupt(motorInterrupt);
 }
 
+void disableStepperWithDelay() {
+	disengageCounter = 500000L / (((unsigned long)delayMultiplier) * DELAY_MULTIPLIER);
+}
+
 void motorInterrupt() {
+	if (!isMoving && disengageCounter > 0) {
+		disengageCounter--;
+		if (disengageCounter == 0 && !holdEnabled) {
+			stepper.disable();
+		}
+	} else {
+		disengageCounter = 0;
+	}
+
 	if (!isMoving) {
 		return;
 	}
@@ -150,7 +165,7 @@ void motorInterrupt() {
 			isMoving = false;
 		}
 	}
-	
+
 	if (currentPosition == newPosition) {
 		isMoving = false;
 		saveSettings();
@@ -158,9 +173,7 @@ void motorInterrupt() {
 
 	/* Release motor if stopping conditions reached */
 	if (!isMoving) {
-		if (!holdEnabled) {
-			stepper.disable();
-		}
+		disableStepperWithDelay();
 		stepperEnabled = false;
 	}
 }
@@ -180,7 +193,7 @@ void loop() {
 				case stop:
 					/* Stop moving */
 					isMoving = false;
-					stepper.disable();
+					disableStepperWithDelay();
 					break;
 				case get_current_position:
 					/* Get current position */
@@ -288,4 +301,3 @@ void loop() {
 		}
 	}
 }
-
