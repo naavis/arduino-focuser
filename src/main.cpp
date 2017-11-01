@@ -15,8 +15,8 @@
 #define MICROSTEPS_HALF 16
 #define MICROSTEPS_FULL 8
 #define RPM 200
-#define DELAY_MULTIPLIER 300
-
+#define DELAY_MULTIPLIER 400
+#define DRIVER_DISCONNECTED_MILLIS (30 * 1000)
 #define EEPROM_MARKER 'F'
 
 /* Stepper definition */
@@ -24,6 +24,8 @@ DRV8825 stepper(200, PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
 bool useFineMicroSteps = true;
 bool stepperEnabled = false;
 bool holdEnabled = false;
+unsigned long lastSerialReceived = 0;
+unsigned long lastInterruptFinished = 0;
 
 struct Settings {
 	uint8_t marker;
@@ -117,8 +119,9 @@ void setup() {
 	} else {
 		stepper.disable();
 	}
+	stepperEnabled = holdEnabled;
 	setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
-	Timer1.attachInterrupt(motorInterrupt);
+//	Timer1.attachInterrupt(motorInterrupt);
 }
 
 void disableStepperWithDelay() {
@@ -140,13 +143,13 @@ void motorInterrupt() {
 	}
 
 	/* Move stepper and update currentPosition */
+	if (currentPosition != newPosition && !stepperEnabled) {
+		stepper.enable();
+		delay(1);
+		stepperEnabled = true;
+	}
 	if (currentPosition < newPosition) {
 		if (currentPosition < 65535) {
-			if (!stepperEnabled && !holdEnabled) {
-				stepper.enable();
-				delay(1);
-				stepperEnabled = true;
-			}
 			stepper.move(1);
 			currentPosition += 1;
 		} else {
@@ -154,11 +157,6 @@ void motorInterrupt() {
 		}
 	} else if (currentPosition > newPosition) {
 		if (currentPosition > 0) {
-			if (!stepperEnabled && !holdEnabled) {
-				stepper.enable();
-				delay(1);
-				stepperEnabled = true;
-			}
 			stepper.move(-1);
 			currentPosition -= 1;
 		} else {
@@ -182,122 +180,147 @@ void setStepInterval(long microseconds) {
 	Timer1.initialize(microseconds);
 }
 
-void loop() {
+void handleSerial() {
 	/* Check for serial communications and act accordingly. */
-	if (Serial.available()) {
-		if (Serial.read() == ':') {
-			clearBuffer(serialBuffer, SERIAL_BUFFER_LENGTH);
-			Serial.readBytesUntil('#', serialBuffer, 8);
-			MOONLITE_COMMAND command = moonliteStringToEnum(serialBuffer);
-			switch (command) {
-				case stop:
-					/* Stop moving */
-					isMoving = false;
-					disableStepperWithDelay();
-					break;
-				case get_current_position:
-					/* Get current position */
-					char currentPositionString[4];
-					sprintf(currentPositionString, "%04X", currentPosition);
-					Serial.print(currentPositionString);
-					Serial.print("#");
-					break;
-				case set_current_position:
-					/* Set current position */
-					if (isMoving) break;
-					currentPosition = four_chars_to_uint16(serialBuffer + 2);
-					saveSettings();
-					break;
-				case get_new_position:
-					/* Get new position set by SN */
-					char newPositionString[4];
-					sprintf(newPositionString, "%04X", newPosition);
-					Serial.print(newPositionString);
-					Serial.print("#");
-					break;
-				case set_new_position:
-					/* Set new position */
-					if (isMoving) break;
-					newPosition = four_chars_to_uint16(serialBuffer + 2);
-					break;
-				case go_to_new_position:
-					/* Go to new position set by SN */
-					isMoving = true;
-					break;
-				case check_if_half_step:
-					/* Check if half-stepping */
-					if (useFineMicroSteps) {
-						Serial.print("FF#");
-					} else {
-						Serial.print("00#");
-					}
-					break;
-				case set_full_step:
-					/* Set full-step mode */
-					if (isMoving) break;
-					stepper.setMicrostep(MICROSTEPS_FULL);
-					useFineMicroSteps = false;
-					saveSettings();
-					break;
-				case set_half_step:
-					/* Set half-step mode */
-					if (isMoving) break;
-					stepper.setMicrostep(MICROSTEPS_HALF);
-					useFineMicroSteps = true;
-					saveSettings();
-					break;
-				case check_if_moving:
-					/* Check if moving */
-					if (isMoving) {
-						Serial.print("01#");
-					} else {
-						Serial.print("00#");
-					}
-					break;
-				case get_firmware_version:
-					/* Get firmware version */
-					Serial.print("01#");
-					break;
-				case get_backlight_value:
-					/* Get current Red LED Backlight value */
-					Serial.print("00#");
-					break;
-				case get_speed:
-					/* Get speed */
-					char speedString[2];
-					sprintf(speedString, "%02X", delayMultiplier);
-					Serial.print(speedString);
-					Serial.print("#");
-					break;
-				case set_speed:
-					/* Set speed */
-					if (isMoving) break;
-					delayMultiplier = two_chars_to_uint8(serialBuffer + 2);
-					setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
-					saveSettings();
-					break;
-				case get_temperature:
-					/* TODO: Get temperature */
-					Serial.print("0000#");
-					break;
-				case set_hold_enabled:
-					holdEnabled = true;
-					stepper.enable();
-					saveSettings();
-					break;
-				case set_hold_disabled:
-					holdEnabled = false;
-					stepper.disable();
-					saveSettings();
-					break;
-				case unrecognized:
-					/* TODO: React to unrecognized command */
-					break;
-				default:
-					break;
-			}
+	if (!Serial.available())
+		return;
 
-			Serial.flush();
+	if (Serial.read() == ':') {
+		clearBuffer(serialBuffer, SERIAL_BUFFER_LENGTH);
+		Serial.readBytesUntil('#', serialBuffer, 8);
+		MOONLITE_COMMAND command = moonliteStringToEnum(serialBuffer);
+		lastSerialReceived = millis();
+		switch (command) {
+			case stop:
+				/* Stop moving */
+				isMoving = false;
+				disableStepperWithDelay();
+				break;
+			case get_current_position:
+				/* Get current position */
+				char currentPositionString[4];
+				sprintf(currentPositionString, "%04X", currentPosition);
+				Serial.print(currentPositionString);
+				Serial.print("#");
+				break;
+			case set_current_position:
+				/* Set current position */
+				if (isMoving) break;
+				currentPosition = four_chars_to_uint16(serialBuffer + 2);
+				saveSettings();
+				break;
+			case get_new_position:
+				/* Get new position set by SN */
+				char newPositionString[4];
+				sprintf(newPositionString, "%04X", newPosition);
+				Serial.print(newPositionString);
+				Serial.print("#");
+				break;
+			case set_new_position:
+				/* Set new position */
+				if (isMoving) break;
+				newPosition = four_chars_to_uint16(serialBuffer + 2);
+				break;
+			case go_to_new_position:
+				/* Go to new position set by SN */
+				isMoving = true;
+				break;
+			case check_if_half_step:
+				/* Check if half-stepping */
+				if (useFineMicroSteps) {
+					Serial.print("FF#");
+				} else {
+					Serial.print("00#");
+				}
+				break;
+			case set_full_step:
+				/* Set full-step mode */
+				if (isMoving) break;
+				stepper.setMicrostep(MICROSTEPS_FULL);
+				useFineMicroSteps = false;
+				saveSettings();
+				break;
+			case set_half_step:
+				/* Set half-step mode */
+				if (isMoving) break;
+				stepper.setMicrostep(MICROSTEPS_HALF);
+				useFineMicroSteps = true;
+				saveSettings();
+				break;
+			case check_if_moving:
+				/* Check if moving */
+				if (isMoving) {
+					Serial.print("01#");
+				} else {
+					Serial.print("00#");
+				}
+				break;
+			case get_firmware_version:
+				/* Get firmware version */
+				Serial.print("01#");
+				break;
+			case get_backlight_value:
+				/* Get current Red LED Backlight value */
+				Serial.print("00#");
+				break;
+			case get_speed:
+				/* Get speed */
+				char speedString[2];
+				sprintf(speedString, "%02X", delayMultiplier);
+				Serial.print(speedString);
+				Serial.print("#");
+				break;
+			case set_speed:
+				/* Set speed */
+				if (isMoving) break;
+				delayMultiplier = two_chars_to_uint8(serialBuffer + 2);
+				setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
+				saveSettings();
+				break;
+			case get_temperature:
+				/* TODO: Get temperature */
+				Serial.print("0000#");
+				break;
+			case set_hold_enabled:
+				holdEnabled = true;
+				stepper.enable();
+				saveSettings();
+				break;
+			case set_hold_disabled:
+				holdEnabled = false;
+				stepper.disable();
+				saveSettings();
+				break;
+			case unrecognized:
+				/* TODO: React to unrecognized command */
+				break;
+			default:
+				break;
 		}
 	}
+}
+
+void disableStepperIfNoSerialTraffic() {
+	/* timeout focuser power if no data is received for a while; driver is most likely disconnected */
+	if (millis() - lastSerialReceived > DRIVER_DISCONNECTED_MILLIS) {
+		stepper.disable();
+		stepperEnabled = false;
+	}
+}
+
+void delayUntilNextTick() {
+	unsigned long tickLength = ((unsigned int)delayMultiplier) * DELAY_MULTIPLIER;
+	unsigned long microsSinceLastCall = micros() - lastInterruptFinished;
+	long microsToWait = tickLength - microsSinceLastCall;
+	/* micros() overflows every 70 minutes; clamp to 0..tickLength */
+	microsToWait = min(max(microsToWait, 0), tickLength);
+	delayMicroseconds(microsToWait);
+}
+
+void loop() {
+	motorInterrupt();
+	lastInterruptFinished = micros();
+	disableStepperIfNoSerialTraffic();
+	handleSerial();
+	delayUntilNextTick();
 }
