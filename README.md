@@ -14,12 +14,12 @@ To use this controller, you should first connect your Arduino to the DRV8825 boa
 
 Note: For the Moonlite ASCOM driver to work, you must add a 100uF capacitor to your Arduino between RST and GND to prevent the Arduino from rebooting when the serial connection is opened. Otherwise the ASCOM driver will time out and not detect your controller.
 
-Differences to Moonlite controller
-----------------------------------
+Differences to the Moonlite controller
+--------------------------------------
 
 The Moonlite driver has the option for selecting the focuser speed from 250 steps/s to 16 steps/s. In order to achieve the high speed of up to 1000 steps/s these values are multiplied by four by the controller.
 
-The driver also has a selection for setting the microstepping mode to "full" or "half". The controller supports 1/1, 1/2, 1/4, 1/8, 1/16 and 1/32 step microstepping modes. Please edit the `Config.h` to select the microstepping modes that the moonlite "full" and "half" commands should correspond to.
+The driver also has a selection for setting the microstepping mode to "full" or "half". The controller supports 1/1, 1/2, 1/4, 1/8, 1/16 and 1/32 step microstepping modes. Please edit the `Config.h` to select the microstepping modes that the Moonlite "full" and "half" commands should correspond to.
 
 Focuser hold power
 ------------------
