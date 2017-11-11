@@ -1,32 +1,50 @@
-#include <DRV8825.h>
+/*
+ * Copyright (c) 2017 Jari Saukkonen, Samuli Vuorinen
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
 #include <EEPROM.h>
 #include <TimerOne.h>
+#include "Config.h"
+#include "DRV8825.h"
 #include "moonlite.h"
 
-/* Stepper pins */
-#define PIN_M0 6
-#define PIN_M1 5
-#define PIN_M2 4
-#define PIN_DIR 2
-#define PIN_STEP 3
-#define PIN_ENABLE 7
-#define PIN_LED 13
-
-#define MICROSTEPS_HALF 16
-#define MICROSTEPS_FULL 8
-#define RPM 200
-#define DELAY_MULTIPLIER 400
 #define DRIVER_DISCONNECTED_MILLIS (30 * 1000)
 #define EEPROM_MARKER 'F'
+#define INTERRUPT_RATE_US 500
 
 /* Stepper definition */
-DRV8825 stepper(200, PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
-bool useFineMicroSteps = true;
-bool stepperEnabled = false;
-bool holdEnabled = false;
-unsigned long lastSerialReceived = 0;
-unsigned long lastInterruptFinished = 0;
+DRV8825 stepper(PIN_DIR, PIN_STEP, PIN_ENABLE, PIN_M0, PIN_M1, PIN_M2);
 
+/* Microstepping level. Original moonlite is full/half, we have different settings from 
+   MICROSTEPS_FULL and MICROSTEPS_HALF. */
+bool useFineMicroSteps = true;
+
+/* Shall we keep focuser power on after the move has ended? */
+bool holdEnabled = false;
+
+/* Timestamp (micros()) of last received serial traffic */
+unsigned long lastSerialReceived = 0;
+
+/* Settings data in EEPROM */
 struct Settings {
 	uint8_t marker;
 	uint16_t currentPosition;
@@ -57,16 +75,23 @@ Only the following values are accepted in the spec:
 16 -> 32 ms,
 32 -> 64 ms.
 
-But we take some liberty in interpreting this as we use heavy microstepping..
+But we take some liberty in interpreting this as we use heavy microstepping.
+The actual delay is delayMultiplier * 500us.
 */
 volatile uint8_t delayMultiplier = 2;
 
 /* Is the focuser currently moving? */
 volatile bool isMoving = false;
 
+/* Counter for calculating when to disengage focuser power after move */
 volatile int disengageCounter = 0;
 
-void setStepInterval(long microseconds);
+/* Interrupt counter for slower slew rates */
+volatile int interruptCounter = 0;
+
+/* Flag for requesting settings to be saved; used in interrupt handler */
+volatile bool needToSaveSettings = false;
+
 void motorInterrupt();
 
 void loadSettings() {
@@ -113,22 +138,22 @@ void setup() {
 		delay(10);
 	}
 
-	stepper.begin(RPM, MICROSTEPS_HALF);
+	stepper.setMicrostepping(useFineMicroSteps ? MICROSTEPS_HALF : MICROSTEPS_FULL);
 	if (holdEnabled) {
 		stepper.enable();
 	} else {
 		stepper.disable();
 	}
-	stepperEnabled = holdEnabled;
-	setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
-//	Timer1.attachInterrupt(motorInterrupt);
+
+	Timer1.initialize(INTERRUPT_RATE_US);
+	Timer1.attachInterrupt(motorInterrupt);
 }
 
 void disableStepperWithDelay() {
-	disengageCounter = 500000L / (((unsigned long)delayMultiplier) * DELAY_MULTIPLIER);
+	disengageCounter = INTERRUPT_RATE_US*2;
 }
 
-void motorInterrupt() {
+void handleDelayedDisable() {
 	if (!isMoving && disengageCounter > 0) {
 		disengageCounter--;
 		if (disengageCounter == 0 && !holdEnabled) {
@@ -137,47 +162,41 @@ void motorInterrupt() {
 	} else {
 		disengageCounter = 0;
 	}
+}
+
+void motorInterrupt() {
+	handleDelayedDisable();
+
+	/* handle only every nth interrupt if a slower speed is selected */
+	if (++interruptCounter < delayMultiplier) {
+		return;
+	}
+	interruptCounter = 0;
 
 	if (!isMoving) {
 		return;
 	}
 
-	/* Move stepper and update currentPosition */
-	if (currentPosition != newPosition && !stepperEnabled) {
+	/* Enable stepper if it has been shut down */
+	if (currentPosition != newPosition && !stepper.isEnabled()) {
 		stepper.enable();
-		delay(1);
-		stepperEnabled = true;
-	}
-	if (currentPosition < newPosition) {
-		if (currentPosition < 65535) {
-			stepper.move(1);
-			currentPosition += 1;
-		} else {
-			isMoving = false;
-		}
-	} else if (currentPosition > newPosition) {
-		if (currentPosition > 0) {
-			stepper.move(-1);
-			currentPosition -= 1;
-		} else {
-			isMoving = false;
-		}
 	}
 
+	/* Move stepper and update currentPosition */
+	if (currentPosition < newPosition && currentPosition < 65535) {
+		stepper.step(1);
+		currentPosition++;
+	} else if (currentPosition > newPosition && currentPosition > 0) {
+		stepper.step(-1);
+		currentPosition--;
+	}
+
+	/* If we have reached desired position end the move and save new position to EEPROM */
 	if (currentPosition == newPosition) {
 		isMoving = false;
-		saveSettings();
-	}
-
-	/* Release motor if stopping conditions reached */
-	if (!isMoving) {
+		needToSaveSettings = true;
 		disableStepperWithDelay();
-		stepperEnabled = false;
 	}
-}
-
-void setStepInterval(long microseconds) {
-	Timer1.initialize(microseconds);
 }
 
 void handleSerial() {
@@ -194,6 +213,7 @@ void handleSerial() {
 			case stop:
 				/* Stop moving */
 				isMoving = false;
+				newPosition = currentPosition;
 				disableStepperWithDelay();
 				break;
 			case get_current_position:
@@ -236,14 +256,14 @@ void handleSerial() {
 			case set_full_step:
 				/* Set full-step mode */
 				if (isMoving) break;
-				stepper.setMicrostep(MICROSTEPS_FULL);
+				stepper.setMicrostepping(MICROSTEPS_FULL);
 				useFineMicroSteps = false;
 				saveSettings();
 				break;
 			case set_half_step:
 				/* Set half-step mode */
 				if (isMoving) break;
-				stepper.setMicrostep(MICROSTEPS_HALF);
+				stepper.setMicrostepping(MICROSTEPS_HALF);
 				useFineMicroSteps = true;
 				saveSettings();
 				break;
@@ -274,7 +294,6 @@ void handleSerial() {
 				/* Set speed */
 				if (isMoving) break;
 				delayMultiplier = two_chars_to_uint8(serialBuffer + 2);
-				setStepInterval(((unsigned int)delayMultiplier) * DELAY_MULTIPLIER);
 				saveSettings();
 				break;
 			case get_temperature:
@@ -292,7 +311,7 @@ void handleSerial() {
 				saveSettings();
 				break;
 			case unrecognized:
-				/* TODO: React to unrecognized command */
+				/* We ignore other commands */
 				break;
 			default:
 				break;
@@ -302,25 +321,17 @@ void handleSerial() {
 
 void disableStepperIfNoSerialTraffic() {
 	/* timeout focuser power if no data is received for a while; driver is most likely disconnected */
-	if (millis() - lastSerialReceived > DRIVER_DISCONNECTED_MILLIS) {
+	if (stepper.isEnabled() && (millis() - lastSerialReceived > DRIVER_DISCONNECTED_MILLIS)) {
 		stepper.disable();
-		stepperEnabled = false;
 	}
 }
 
-void delayUntilNextTick() {
-	unsigned long tickLength = ((unsigned int)delayMultiplier) * DELAY_MULTIPLIER;
-	unsigned long microsSinceLastCall = micros() - lastInterruptFinished;
-	long microsToWait = tickLength - microsSinceLastCall;
-	/* micros() overflows every 70 minutes; clamp to 0..tickLength */
-	microsToWait = min(max(microsToWait, 0), tickLength);
-	delayMicroseconds(microsToWait);
-}
-
 void loop() {
-	motorInterrupt();
-	lastInterruptFinished = micros();
+	if (needToSaveSettings) {
+		saveSettings();
+		needToSaveSettings = false;
+	}
+
 	disableStepperIfNoSerialTraffic();
 	handleSerial();
-	delayUntilNextTick();
 }
